@@ -22,9 +22,8 @@ const provider = new ethers.JsonRpcProvider(RPC_URL);
 const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
 
 const CACHE_FILE = path.join(__dirname, '..', 'snapshots', 'events.json');
-const cache = loadCache(CACHE_FILE);
+const cache: Record<string, IndexedEvent> = loadCache(CACHE_FILE);
 
-// ============ Update this to include the events you care about ============
 const EVENTS = ['PostCreated', 'PostLiked', 'CommentAdded', 'PostTipped'];
 
 async function main() {
@@ -33,29 +32,32 @@ async function main() {
   for (const eventName of EVENTS) {
     contract.on(eventName, async (...args) => {
       const event = args[args.length - 1] as Log;
-      const parsed = contract.interface.parseLog(event);
 
-      if (!parsed) return;
+      try {
+        const parsed = contract.interface.parseLog(event);
+        if (!parsed) return;
 
-      const evt: IndexedEvent = {
-        name: parsed.name,
-        args: Object.fromEntries(Object.entries(parsed.args)),
-        blockNumber: event.blockNumber,
-        txHash: event.transactionHash,
-      };
+        const evt: IndexedEvent = {
+          name: parsed.name,
+          args: parsed.args as Record<string, any>,
+          blockNumber: event.blockNumber,
+          txHash: event.transactionHash,
+        };
 
-      // Save event if not already cached
-      const id = `${evt.name}_${evt.txHash}_${evt.blockNumber}`;
-      if (!cache[id]) {
-        cache[id] = evt;
-        saveCache(CACHE_FILE, cache);
-        console.log(`🧠 Cached event: ${evt.name} @ block ${evt.blockNumber}`);
+        const id = `${evt.name}_${evt.txHash}_${evt.blockNumber}`;
+        if (!cache[id]) {
+          cache[id] = evt;
+          saveCache(CACHE_FILE, cache);
+          console.log(`🧠 Saved: ${evt.name} @ block ${evt.blockNumber}`);
+        }
+      } catch (err) {
+        console.warn('⚠️ Failed to parse log:', err);
       }
     });
   }
 }
 
 main().catch((err) => {
-  console.error('❌ Listener crashed:', err);
+  console.error('❌ Fatal error:', err);
   process.exit(1);
 });
