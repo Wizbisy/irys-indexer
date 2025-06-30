@@ -22,3 +22,4 @@ jobs:
         env:
           RPC_URL: ${{ secrets.RPC_URL }}
           PROXY_ADDRESS: ${{ secrets.CONTRACT_ADDRESS }}
+          START_BLOCK: ${{ secrets.START_BLOCK }}
