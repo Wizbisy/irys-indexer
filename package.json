@@ -1,0 +1,16 @@
+{
+  "name": "irys-indexer",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "ts-node src/listener.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "ethers": "^6.6.2"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  }
+}
