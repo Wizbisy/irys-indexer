@@ -1,148 +1,72 @@
 import "dotenv/config";
 import { ethers } from "ethers";
-import fs from "fs/promises"; // Use promises for async file operations
+import fs from "fs";
 import path from "path";
+import { loadCache, saveCache } from "./cache";
 
-// Define types for better type safety
+// ---------- constants ----------
+const ABI_PATH        = path.join(__dirname, "..", "abis", "PostBoard.json");
+const ABI             = JSON.parse(fs.readFileSync(ABI_PATH, "utf8"));
+const RPC_URL         = process.env.RPC_URL!;
+const PROXY_ADDRESS   = process.env.PROXY_ADDRESS!;
+const START_BLOCK     = 7455;   // first block to index
+const SNAPSHOT_FILE   = path.join(__dirname, "..", "snapshots", "posts.json");
+
+// ---------- provider & contract ----------
+const provider = new ethers.JsonRpcProvider(RPC_URL);
+const contract = new ethers.Contract(PROXY_ADDRESS, ABI, provider);
+
+// ---------- in‑memory cache structure ----------
 interface IndexedEvent {
   name: string;
-  args: Record<string, unknown>;
+  args: Record<string, any>;
   blockNumber: number;
   txHash: string;
 }
+type Cache = { __lastBlock?: number } & Record<string, IndexedEvent>;
+const cache: Cache = loadCache() as Cache;
 
-interface Cache {
-  __lastBlock?: number;
-  [txHash: string]: IndexedEvent | number | undefined;
-}
-
-// Cache file path
-const CACHE_FILE = path.join(__dirname, "..", "snapshots", "cache.json");
-const SNAPSHOT_FILE = path.join(__dirname, "..", "snapshots", "posts.json");
-const ABI_PATH = path.join(__dirname, "..", "abis", "PostBoard.json");
-
-// Load ABI
-let ABI: any;
-try {
-  ABI = JSON.parse(fs.readFileSync(ABI_PATH, "utf8"));
-} catch (error) {
-  console.error("🚨 Failed to load ABI:", error);
-  process.exit(1);
-}
-
-// Validate environment variables
-if (!process.env.RPC_URL || !process.env.PROXY_ADDRESS) {
-  console.error("🚨 Missing required environment variables: RPC_URL or PROXY_ADDRESS");
-  process.exit(1);
-}
-
-// Initialize provider and contract
-const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
-const contract = new ethers.Contract(process.env.PROXY_ADDRESS, ABI, provider);
-
-// The first block containing your proxy’s deploy tx
-const START_BLOCK = 7455;
-const MAX_BLOCK_RANGE = 1000; // Prevent RPC overload
-
-// Cache management
-async function loadCache(): Promise<Cache> {
-  try {
-    const data = await fs.readFile(CACHE_FILE, "utf8");
-    return JSON.parse(data) as Cache;
-  } catch (error) {
-    console.warn("⚠️ Cache file not found or invalid, starting fresh");
-    return {};
-  }
-}
-
-async function saveCache(cache: Cache): Promise<void> {
-  try {
-    await fs.mkdir(path.dirname(CACHE_FILE), { recursive: true });
-    await fs.writeFile(CACHE_FILE, JSON.stringify(cache, null, 2));
-  } catch (error) {
-    console.error("🚨 Failed to save cache:", error);
-    throw error;
-  }
-}
-
+// ---------- main sync ----------
 async function main() {
-  console.log("📡 IRYS Testnet event listener started…");
+  console.log("📡  IRYS Testnet listener running…");
 
-  // Load cache
-  const cache: Cache = await loadCache();
-  const latestBlock = await provider.getBlockNumber();
-  let fromBlock = cache.__lastBlock ?? START_BLOCK;
+  const from = cache.__lastBlock ?? START_BLOCK;
+  const to   = await provider.getBlockNumber();
+  console.log(`🔎  Scanning blocks  ${from} → ${to}`);
 
-  // Ensure fromBlock is valid
-  if (fromBlock < START_BLOCK) {
-    console.warn(`⚠️ Invalid cache.__lastBlock (${fromBlock}), resetting to START_BLOCK`);
-    fromBlock = START_BLOCK;
-  }
-
-  if (fromBlock > latestBlock) {
-    console.log("✅ No new blocks to process.");
-    return;
-  }
-
-  console.log(`🔎 Syncing ${fromBlock} → ${latestBlock}`);
-
+  const logs = await contract.queryFilter("*", from, to);
   const indexed: IndexedEvent[] = [];
 
-  // Process blocks in chunks to avoid RPC limits
-  while (fromBlock <= latestBlock) {
-    const toBlock = Math.min(fromBlock + MAX_BLOCK_RANGE - 1, latestBlock);
+  for (const log of logs) {
+    if (cache[log.transactionHash]) continue;  // skip duplicates
 
-    try {
-      const logs = await contract.queryFilter("*", fromBlock, toBlock);
-      for (const log of logs) {
-        if (cache[log.transactionHash]) continue; // Dedupe
+    const parsed = contract.interface.parseLog(log);
+    if (!parsed) continue; // safety
 
-        const parsed = contract.interface.parseLog(log);
-        if (!parsed) {
-          console.warn(`⚠️ Un-parsable log at tx ${log.transactionHash}, skipping`);
-          continue;
-        }
+    const evt: IndexedEvent = {
+      name:        parsed.name,
+      args:        parsed.args.toObject?.() ?? Object.fromEntries(parsed.args.entries()),
+      blockNumber: log.blockNumber,
+      txHash:      log.transactionHash,
+    };
 
-        const { name, args } = parsed;
-        console.log(`📌 [${log.blockNumber}] ${name}`);
-
-        const evt: IndexedEvent = {
-          name,
-          args: Object.fromEntries(
-            parsed.eventFragment.inputs.map((inp, i) => [inp.name, args[i]])
-          ),
-          blockNumber: log.blockNumber,
-          txHash: log.transactionHash,
-        };
-
-        cache[log.transactionHash] = evt;
-        indexed.push(evt);
-      }
-    } catch (error) {
-      console.error(`🚨 Error fetching logs for blocks ${fromBlock}-${toBlock}:`, error);
-      throw error;
-    }
-
-    fromBlock = toBlock + 1;
+    cache[log.transactionHash] = evt;
+    indexed.push(evt);
+    console.log(`📌  [${evt.blockNumber}] ${evt.name}`);
   }
 
-  // Write snapshot
-  try {
-    await fs.mkdir(path.dirname(SNAPSHOT_FILE), { recursive: true });
-    await fs.writeFile(SNAPSHOT_FILE, JSON.stringify(indexed, null, 2));
-    console.log(`💾 Snapshot saved → ${SNAPSHOT_FILE}`);
-  } catch (error) {
-    console.error("🚨 Failed to save snapshot:", error);
-    throw error;
-  }
+  // write snapshot array
+  fs.mkdirSync(path.dirname(SNAPSHOT_FILE), { recursive: true });
+  fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(indexed, null, 2));
+  console.log("💾  Snapshot saved → snapshots/posts.json");
 
-  // Update and save cache
-  cache.__lastBlock = latestBlock;
-  await saveCache(cache);
-  console.log("✅ Cache updated.");
+  // persist cache
+  cache.__lastBlock = to;
+  saveCache(cache);
+  console.log("✅  Cache updated.");
 }
 
-main().catch((error) => {
-  console.error("🚨 Listener failed:", error);
+main().catch((err) => {
+  console.error("🚨  Listener error:", err);
   process.exit(1);
 });
