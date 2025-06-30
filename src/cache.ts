@@ -1,24 +1,19 @@
 import fs from "fs";
+import path from "path";
 
-const DIR = "snapshots";
-const FILE = `${DIR}/posts.json`;
+const CACHE_FILE = path.join(__dirname, "..", "snapshots", "cache.json");
 
-export interface Snapshot {
-  lastBlock: number;
-  posts: Record<string, any>;
-}
+let memoryCache: Record<string, any> = {};
 
-// ensure directory
-fs.mkdirSync(DIR, { recursive: true });
-
-export function load(): Snapshot {
-  if (fs.existsSync(FILE)) {
-    return JSON.parse(fs.readFileSync(FILE, "utf8"));
+export const loadCache = () => {
+  if (fs.existsSync(CACHE_FILE)) {
+    memoryCache = JSON.parse(fs.readFileSync(CACHE_FILE, "utf-8"));
   }
-  return { lastBlock: 0, posts: {} };
-}
+  return memoryCache;
+};
 
-export function save(snapshot: Snapshot): void {
-  fs.writeFileSync(FILE, JSON.stringify(snapshot, null, 2));
-  console.log("💾  Snapshot saved.");
-}
+export const saveCache = () => {
+  fs.writeFileSync(CACHE_FILE, JSON.stringify(memoryCache, null, 2));
+};
+
+export const getCache = () => memoryCache;
