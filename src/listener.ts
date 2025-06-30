@@ -8,7 +8,7 @@ dotenv.config();
 
 const RPC_URL = process.env.RPC_URL!;
 const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS!;
-const ABI_PATH = path.join(__dirname, '..', 'abis' 'PostBoard.json');
+const ABI_PATH = path.join(__dirname, '..', 'abis', 'PostBoard.json');
 const ABI = JSON.parse(fs.readFileSync(ABI_PATH, 'utf8'));
 
 interface IndexedEvent {
