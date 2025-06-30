@@ -21,4 +21,4 @@ jobs:
         run: npm run start
         env:
           RPC_URL: ${{ secrets.RPC_URL }}
-          PROXY_ADDRESS: ${{ secrets.PROXY_ADDRESS }}
+          PROXY_ADDRESS: ${{ secrets.CONTRACT_ADDRESS }}
